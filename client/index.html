@@ -133,7 +133,7 @@
             setCode(newContent);
             if (monacoRef.current) monacoRef.current.setValue(newContent);
             if (language) {
-                monacoRef.current.getModel().setLanguage(language);
+                monaco.editor.setModelLanguage(monacoRef.current.getModel(), language);
                 currentFileLanguage.current = language;
             }
           } else if (type === 'chat') {
@@ -212,14 +212,14 @@
             const lang = fileData.language || (selectedFile.endsWith('.css') ? 'css' : selectedFile.endsWith('.js') ? 'javascript' : selectedFile.endsWith('.py') ? 'python' : 'plaintext');
             if (monacoRef.current) {
                 monacoRef.current.setValue(fileData.content);
-                monacoRef.current.getModel().setLanguage(lang);
+                monaco.editor.setModelLanguage(monacoRef.current.getModel(), lang);
                 currentFileLanguage.current = lang;
             }
           } else {
              setCode('');
              if (monacoRef.current) {
                  monacoRef.current.setValue('');
-                 monacoRef.current.getModel().setLanguage('plaintext');
+                 monaco.editor.setModelLanguage(monacoRef.current.getModel(), 'plaintext');
                  currentFileLanguage.current = 'plaintext';
              }
           }
