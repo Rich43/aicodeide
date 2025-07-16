@@ -134,4 +134,4 @@ A web-based Integrated Development Environment (IDE) designed for coding with AI
 - **SuperGrok**: For higher limits, consider [SuperGrok](https://x.ai/grok) ($300/year).
 
 ## License
-MIT License. See `LICENSE` file (not included here) for details.
+MIT License. See the `LICENSE` file for details.
