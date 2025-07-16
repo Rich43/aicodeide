@@ -44,3 +44,15 @@ A web-based Integrated Development Environment (IDE) designed for coding with AI
   pip install pycodestyle
   ```
 
+
+## Testing
+
+End-to-end tests are written with [Cypress](https://www.cypress.io/).
+Install dependencies and run the tests:
+
+```bash
+npm install
+npm run test:e2e
+```
+
+This uses Cypress's built-in file server to load `index.html`.
