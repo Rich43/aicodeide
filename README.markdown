@@ -54,6 +54,7 @@ A web-based Integrated Development Environment (IDE) designed for coding with AI
    node server.js
    ```
    The server runs on `http://localhost:3000` and WebSocket on `ws://localhost:3000`.
+5. To run the tests, install Python 3 and `pycodestyle`. See the `Prerequisites` section of `server/README.md` for details.
 
 ### Frontend Setup
 1. Navigate to the `client` directory and host it using a static server:
