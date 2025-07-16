@@ -1,0 +1,529 @@
+<script type="text/javascript">
+        var gk_isXlsx = false;
+        var gk_xlsxFileLookup = {};
+        var gk_fileData = {};
+        function filledCell(cell) {
+          return cell !== '' && cell != null;
+        }
+        function loadFileData(filename) {
+        if (gk_isXlsx && gk_xlsxFileLookup[filename]) {
+            try {
+                var workbook = XLSX.read(gk_fileData[filename], { type: 'base64' });
+                var firstSheetName = workbook.SheetNames[0];
+                var worksheet = workbook.Sheets[firstSheetName];
+
+                // Convert sheet to JSON to filter blank rows
+                var jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1, blankrows: false, defval: '' });
+                // Filter out blank rows (rows where all cells are empty, null, or undefined)
+                var filteredData = jsonData.filter(row => row.some(filledCell));
+
+                // Heuristic to find the header row by ignoring rows with fewer filled cells than the next row
+                var headerRowIndex = filteredData.findIndex((row, index) =>
+                  row.filter(filledCell).length >= filteredData[index + 1]?.filter(filledCell).length
+                );
+                // Fallback
+                if (headerRowIndex === -1 || headerRowIndex > 25) {
+                  headerRowIndex = 0;
+                }
+
+                // Convert filtered JSON back to CSV
+                var csv = XLSX.utils.aoa_to_sheet(filteredData.slice(headerRowIndex)); // Create a new sheet from filtered array of arrays
+                csv = XLSX.utils.sheet_to_csv(csv, { header: 1 });
+                return csv;
+            } catch (e) {
+                console.error(e);
+                return "";
+            }
+        }
+        return gk_fileData[filename] || "";
+        }
+        </script><!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Coding AI IDE with Manual Code Application</title>
+  <script src="https://cdn.jsdelivr.net/npm/react@18.2.0/umd/react.production.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/react-dom@18.2.0/umd/react-dom.production.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@babel/standalone@7.21.4/babel.min.js"></script>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.34.0/min/vs/loader.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jsdiff/5.1.0/diff.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/file-saver/2.0.5/FileSaver.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.0/Sortable.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/react-sortablejs@6.1.4/dist/index.min.js"></script>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="text/babel">
+    const { useState, useEffect, useRef } = React;
+    const { Sortable } = ReactSortable;
+
+    function FileTree({ files, onSelect, onCreateFile, onCreateFolder, onRename, onDelete }) {
+      const buildTree = (files) => {
+        const tree = {};
+        Object.keys(files).forEach(path => {
+          const parts = path.split('/').filter(p => p);
+          let current = tree;
+          parts.forEach((part, i) => {
+            if (i === parts.length - 1) {
+              current[part] = { path, isFile: true };
+            } else {
+              current[part] = current[part] || { children: {} };
+              current = current[part].children;
+            }
+          });
+        });
+        return tree;
+      };
+
+      const renderTree = (tree, prefix = '') => {
+        return Object.entries(tree).map(([name, node]) => (
+          <div key={`${prefix}/${name}`}>
+            {node.isFile ? (
+              <div
+                className={`p-2 cursor-pointer rounded ${selectedFile === node.path ? 'bg-blue-600' : 'hover:bg-gray-700'}`}
+                onClick={() => onSelect(node.path)}
+              >
+                {name}
+                <button onClick={() => onRename(node.path)} className="ml-2 text-xs text-gray-400">Rename</button>
+                <button onClick={() => onDelete(node.path)} className="ml-2 text-xs text-red-400">Delete</button>
+              </div>
+            ) : (
+              <div>
+                <div className="p-2 font-bold">{name}</div>
+                <div className="ml-4">
+                  <button onClick={() => onCreateFile(`${prefix}/${name}`)} className="text-xs text-blue-400">+ File</button>
+                  <button onClick={() => onCreateFolder(`${prefix}/${name}`)} className="ml-2 text-xs text-blue-400">+ Folder</button>
+                  {renderTree(node.children, `${prefix}/${name}`)}
+                </div>
+              </div>
+            )}
+          </div>
+        ));
+      };
+
+      return <div>{renderTree(buildTree(files))}</div>;
+    }
+
+    function App() {
+      const [files, setFiles] = useState({});
+      const [selectedFile, setSelectedFile] = useState(null);
+      const [code, setCode] = useState('');
+      const [chatMessages, setChatMessages] = useState([]);
+      const [chatInput, setChatInput] = useState('');
+      const [systemLogs, setSystemLogs] = useState([]);
+      const [activeTab, setActiveTab] = useState('chat');
+      const [settings, setSettings] = useState({
+        apiKeys: {
+          xai: localStorage.getItem('xaiApiKey') || '',
+          openai: localStorage.getItem('openaiApiKey') || '',
+          anthropic: localStorage.getItem('anthropicApiKey') || '',
+          openrouter: localStorage.getItem('openrouterApiKey') || '',
+          openrouterModel: localStorage.getItem('openrouterModel') || 'meta-llama/llama-3.1-8b-instruct:free',
+        },
+        failoverOrder: JSON.parse(localStorage.getItem('failoverOrder')) || ['xAI', 'OpenAI', 'Anthropic', 'OpenRouter'],
+        autoApplyCode: JSON.parse(localStorage.getItem('autoApplyCode')) || false,
+      });
+      const [showSettings, setShowSettings] = useState(!Object.values(settings.apiKeys).some(key => key));
+      const [rateLimit, setRateLimit] = useState({ remaining: null, limit: null });
+      const editorRef = useRef(null);
+      const monacoRef = useRef(null);
+      const wsRef = useRef(null);
+
+      useEffect(() => {
+        wsRef.current = new WebSocket('ws://localhost:3000');
+        wsRef.current.onopen = () => {
+          console.log('WebSocket connected');
+          setSystemLogs(prev => [...prev, `[${new Date().toISOString()}] WebSocket connected`]);
+          if (Object.values(settings.apiKeys).some(key => key)) {
+            wsRef.current.send(JSON.stringify({ type: 'setSettings', settings }));
+          }
+        };
+        wsRef.current.onmessage = (event) => {
+          const { type, files, path, diff, content, provider, newPath, success, status, message, codeBlock, rateLimit } = JSON.parse(event.data);
+          if (type === 'init') {
+            setFiles(files);
+            if (Object.keys(files).length > 0) setSelectedFile(Object.keys(files)[0]);
+          } else if (type === 'diff' && path === selectedFile) {
+            const newContent = window.diff.applyPatch(code, diff);
+            setCode(newContent);
+            if (monacoRef.current) monacoRef.current.setValue(newContent);
+          } else if (type === 'chat') {
+            setChatMessages(prev => [...prev, { role: 'ai', content, provider, codeBlock, path: selectedFile }]);
+            setRateLimit(rateLimit || { remaining: null, limit: null });
+          } else if (type === 'chatStatus') {
+            setChatMessages(prev => [...prev, { role: 'system', content: status }]);
+          } else if (type === 'log') {
+            setSystemLogs(prev => [...prev, message]);
+          } else if (type === 'createFile' || type === 'createFolder') {
+            setFiles(prev => ({ ...prev, [path]: { content: '', version: 1 } }));
+          } else if (type === 'rename') {
+            setFiles(prev => {
+              const newFiles = { ...prev };
+              newFiles[newPath] = newFiles[path];
+              delete newFiles[path];
+              if (selectedFile === path) setSelectedFile(newPath);
+              return newFiles;
+            });
+          } else if (type === 'delete') {
+            setFiles(prev => {
+              const newFiles = { ...prev };
+              delete newFiles[path];
+              if (selectedFile === path) setSelectedFile(null);
+              return newFiles;
+            });
+          } else if (type === 'settingsSet' && success) {
+            setShowSettings(false);
+          } else if (type === 'export') {
+            const zip = new JSZip();
+            Object.entries(files).forEach(([path, file]) => {
+              const parts = path.split('/').filter(p => p);
+              let folder = zip;
+              parts.slice(0, -1).forEach(part => {
+                folder = folder.folder(part);
+              });
+              folder.file(parts[parts.length - 1], file.content);
+            });
+            zip.generateAsync({ type: 'blob' }).then(content => {
+              saveAs(content, 'project.zip');
+            });
+          }
+        };
+        return () => wsRef.current.close();
+      }, []);
+
+      useEffect(() => {
+        require.config({ paths: { 'vs': 'https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.34.0/min/vs' } });
+        require(['vs/editor/editor.main'], () => {
+          monacoRef.current = monaco.editor.create(editorRef.current, {
+            value: code,
+            language: 'javascript',
+            theme: 'vs-dark',
+            automaticLayout: true,
+          });
+          monacoRef.current.onDidChangeModelContent(() => {
+            const newCode = monacoRef.current.getValue();
+            setCode(newCode);
+            if (selectedFile) {
+              wsRef.current.send(JSON.stringify({ type: 'update', path: selectedFile, content: newCode }));
+            }
+          });
+        });
+      }, []);
+
+      useEffect(() => {
+        if (selectedFile) {
+          fetch(`/file/${encodeURIComponent(selectedFile)}`)
+            .then(res => res.json())
+            .then(data => {
+              setCode(data.content);
+              if (monacoRef.current) {
+                monacoRef.current.setValue(data.content);
+                monacoRef.current.getModel().setLanguage(selectedFile.endsWith('.css') ? 'css' : 'javascript');
+              }
+            });
+        }
+      }, [selectedFile]);
+
+      const handleFileSelect = (path) => {
+        setSelectedFile(path);
+      };
+
+      const handleCreateFile = (parentPath) => {
+        const fileName = prompt('Enter file name (e.g., newfile.js):');
+        if (fileName) {
+          const path = `${parentPath}/${fileName}`;
+          wsRef.current.send(JSON.stringify({ type: 'createFile', path }));
+        }
+      };
+
+      const handleCreateFolder = (parentPath) => {
+        const folderName = prompt('Enter folder name:');
+        if (folderName) {
+          const path = `${parentPath}/${folderName}`;
+          wsRef.current.send(JSON.stringify({ type: 'createFolder', path }));
+        }
+      };
+
+      const handleRename = (path) => {
+        const newPath = prompt('Enter new path:', path);
+        if (newPath && newPath !== path) {
+          wsRef.current.send(JSON.stringify({ type: 'rename', path, newPath }));
+        }
+      };
+
+      const handleDelete = (path) => {
+        if (confirm(`Delete ${path}?`)) {
+          wsRef.current.send(JSON.stringify({ type: 'delete', path }));
+        }
+      };
+
+      const handleChatSubmit = (e) => {
+        e.preventDefault();
+        if (!chatInput.trim()) return;
+        setChatMessages(prev => [...prev, { role: 'user', content: chatInput }]);
+        wsRef.current.send(JSON.stringify({ type: 'chat', chatInput, path: selectedFile }));
+        setChatInput('');
+      };
+
+      const handleApplyCode = (codeBlock, path) => {
+        if (selectedFile && codeBlock) {
+          wsRef.current.send(JSON.stringify({ type: 'applyCode', path: selectedFile, content: codeBlock }));
+        }
+      };
+
+      const handleSettingsSubmit = (e) => {
+        e.preventDefault();
+        localStorage.setItem('xaiApiKey', settings.apiKeys.xai);
+        localStorage.setItem('openaiApiKey', settings.apiKeys.openai);
+        localStorage.setItem('anthropicApiKey', settings.apiKeys.anthropic);
+        localStorage.setItem('openrouterApiKey', settings.apiKeys.openrouter);
+        localStorage.setItem('openrouterModel', settings.apiKeys.openrouterModel);
+        localStorage.setItem('failoverOrder', JSON.stringify(settings.failoverOrder));
+        localStorage.setItem('autoApplyCode', JSON.stringify(settings.autoApplyCode));
+        wsRef.current.send(JSON.stringify({ type: 'setSettings', settings }));
+      };
+
+      if (showSettings) {
+        return (
+          <div className="flex items-center justify-center h-screen bg-gray-900 text-white">
+            <div className="bg-gray-800 p-6 rounded-lg shadow-lg w-96">
+              <h2 className="text-xl font-bold mb-4">Settings</h2>
+              <form onSubmit={handleSettingsSubmit}>
+                <div className="mb-4">
+                  <label className="block mb-1">xAI API Key</label>
+                  <input
+                    type="text"
+                    value={settings.apiKeys.xai}
+                    onChange={(e) => setSettings({ ...settings, apiKeys: { ...settings.apiKeys, xai: e.target.value } })}
+                    className="w-full p-2 bg-gray-700 text-white rounded"
+                    placeholder="xAI API Key (optional)"
+                  />
+                </div>
+                <div className="mb-4">
+                  <label className="block mb-1">OpenAI API Key</label>
+                  <input
+                    type="text"
+                    value={settings.apiKeys.openai}
+                    onChange={(e) => setSettings({ ...settings, apiKeys: { ...settings.apiKeys, openai: e.target.value } })}
+                    className="w-full p-2 bg-gray-700 text-white rounded"
+                    placeholder="OpenAI API Key (optional)"
+                  />
+                </div>
+                <div className="mb-4">
+                  <label className="block mb-1">Anthropic API Key</label>
+                  <input
+                    type="text"
+                    value={settings.apiKeys.anthropic}
+                    onChange={(e) => setSettings({ ...settings, apiKeys: { ...settings.apiKeys, anthropic: e.target.value } })}
+                    className="w-full p-2 bg-gray-700 text-white rounded"
+                    placeholder="Anthropic API Key (optional)"
+                  />
+                </div>
+                <div className="mb-4">
+                  <label className="block mb-1">OpenRouter API Key</label>
+                  <input
+                    type="text"
+                    value={settings.apiKeys.openrouter}
+                    onChange={(e) => setSettings({ ...settings, apiKeys: { ...settings.apiKeys, openrouter: e.target.value } })}
+                    className="w-full p-2 bg-gray-700 text-white rounded"
+                    placeholder="OpenRouter API Key (optional)"
+                  />
+                </div>
+                <div className="mb-4">
+                  <label className="block mb-1">OpenRouter Model</label>
+                  <select
+                    value={settings.apiKeys.openrouterModel}
+                    onChange={(e) => setSettings({ ...settings, apiKeys: { ...settings.apiKeys, openrouterModel: e.target.value } })}
+                    className="w-full p-2 bg-gray-700 text-white rounded"
+                  >
+                    <option value="meta-llama/llama-3.1-8b-instruct:free">Llama 3.1 8B (Free)</option>
+                    <option value="xai/grok-3">Grok-3</option>
+                    <option value="anthropic/claude-3.5-sonnet">Claude 3.5 Sonnet</option>
+                  </select>
+                </div>
+                <div className="mb-4">
+                  <label className="block mb-1">Failover Order</label>
+                  <Sortable
+                    list={settings.failoverOrder.map(id => ({ id }))}
+                    setList={(newList) => setSettings({ ...settings, failoverOrder: newList.map(item => item.id) })}
+                    className="bg-gray-700 rounded"
+                  >
+                    {settings.failoverOrder.map(provider => (
+                      <div key={provider} className="p-2 border-b border-gray-600 cursor-move">
+                        {provider}
+                      </div>
+                    ))}
+                  </Sortable>
+                </div>
+                <div className="mb-4">
+                  <label className="flex items-center">
+                    <input
+                      type="checkbox"
+                      checked={settings.autoApplyCode}
+                      onChange={(e) => setSettings({ ...settings, autoApplyCode: e.target.checked })}
+                      className="mr-2"
+                    />
+                    Auto-Apply Code Suggestions
+                  </label>
+                </div>
+                <button type="submit" className="w-full bg-blue-600 hover:bg-blue-700 p-2 rounded">
+                  Save
+                </button>
+              </form>
+              <p className="mt-2 text-sm text-gray-400">
+                Get API keys from <a href="https://console.x.ai" className="text-blue-400">xAI</a>,{' '}
+                <a href="https://platform.openai.com" className="text-blue-400">OpenAI</a>,{' '}
+                <a href="https://console.anthropic.com" className="text-blue-400">Anthropic</a>, or{' '}
+                <a href="https://openrouter.ai" className="text-blue-400">OpenRouter</a>.
+              </p>
+            </div>
+          </div>
+        );
+      }
+
+      return (
+        <div className="flex h-screen bg-gray-900 text-white">
+          <div className="w-1/4 bg-gray-800 p-4 overflow-auto">
+            <div className="flex justify-between mb-2">
+              <h2 className="text-lg font-bold">File Tree</h2>
+              <div>
+                <button
+                  onClick={() => setShowSettings(true)}
+                  className="mr-2 bg-yellow-600 hover:bg-yellow-700 px-2 py-1 rounded text-sm"
+                >
+                  Settings
+                </button>
+                <button
+                  onClick={() => wsRef.current.send(JSON.stringify({ type: 'export' }))}
+                  className="bg-green-600 hover:bg-green-700 px-2 py-1 rounded text-sm"
+                >
+                  Export Project
+                </button>
+              </div>
+            </div>
+            <button
+              onClick={() => handleCreateFile('')}
+              className="mb-2 bg-blue-600 hover:bg-blue-700 text-white px-2 py-1 rounded"
+            >
+              New File
+            </button>
+            <button
+              onClick={() => handleCreateFolder('')}
+              className="mb-2 bg-blue-600 hover:bg-blue-700 text-white px-2 py-1 rounded"
+            >
+              New Folder
+            </button>
+            <FileTree
+              files={files}
+              onSelect={handleFileSelect}
+              onCreateFile={handleCreateFile}
+              onCreateFolder={handleCreateFolder}
+              onRename={handleRename}
+              onDelete={handleDelete}
+            />
+          </div>
+          <div className="flex flex-col w-3/4">
+            <div className="flex flex-1 overflow-hidden">
+              <div className="w-1/2 p-4 bg-gray-700 flex flex-col">
+                <div className="flex mb-2">
+                  <button
+                    onClick={() => setActiveTab('chat')}
+                    className={`px-4 py-1 ${activeTab === 'chat' ? 'bg-blue-600' : 'bg-gray-600'} rounded-l`}
+                  >
+                    Chat
+                  </button>
+                  <button
+                    onClick={() => setActiveTab('logs')}
+                    className={`px-4 py-1 ${activeTab === 'logs' ? 'bg-blue-600' : 'bg-gray-600'} rounded-r`}
+                  >
+                    System Log
+                  </button>
+                </div>
+                {activeTab === 'chat' ? (
+                  <>
+                    <h2 className="text-lg font-bold mb-2">Chat History</h2>
+                    {rateLimit.remaining !== null && rateLimit.limit !== null && (
+                      <div className="mb-2">
+                        <div className="text-sm">API Rate Limit: {rateLimit.remaining}/{rateLimit.limit}</div>
+                        <div className="w-full bg-gray-600 rounded h-2">
+                          <div
+                            className="bg-blue-600 h-2 rounded"
+                            style={{ width: `${(rateLimit.remaining / rateLimit.limit) * 100}%` }}
+                          />
+                        </div>
+                      </div>
+                    )}
+                    <div className="flex-1 overflow-auto mb-4 p-2 bg-gray-800 rounded">
+                      {chatMessages.map((msg, index) => (
+                        <div
+                          key={index}
+                          className={`mb-2 ${
+                            msg.role === 'user' ? 'text-blue-300' :
+                            msg.role === 'system' ? 'text-yellow-300' :
+                            'text-green-300'
+                          }`}
+                        >
+                          <div className="flex items-start">
+                            <div className="flex-1">
+                              <strong>
+                                {msg.role === 'user' ? 'You' :
+                                 msg.role === 'system' ? 'System' :
+                                 `AI (${msg.provider || 'Unknown'})`}:
+                              </strong>{' '}
+                              {msg.content}
+                            </div>
+                            {msg.role === 'ai' && msg.codeBlock && !settings.autoApplyCode && selectedFile === msg.path && (
+                              <button
+                                onClick={() => handleApplyCode(msg.codeBlock, msg.path)}
+                                className="ml-2 bg-blue-600 hover:bg-blue-700 px-2 py-1 rounded text-sm"
+                              >
+                                Apply Code
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                    <form onSubmit={handleChatSubmit} className=" estejam flex">
+                      <input
+                        type="text"
+                        value={chatInput}
+                        onChange={(e) => setChatInput(e.target.value)}
+                        className="flex-1 p-2 bg-gray-800 text-white rounded-l focus:outline-none"
+                        placeholder="Ask AI..."
+                      />
+                      <button type="submit" className="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded-r">
+                        Send
+                      </button>
+                    </form>
+                  </>
+                ) : (
+                  <>
+                    <h2 className="text-lg font-bold mb-2">System Log</h2>
+                    <div className="flex-1 overflow-auto mb-4 p-2 bg-gray-800 rounded">
+                      {systemLogs.map((log, index) => (
+                        <div key={index} className="mb-2 text-gray-300">
+                          {log}
+                        </div>
+                      ))}
+                    </div>
+                  </>
+                )}
+              </div>
+              <div className="w-1/2 p-4 flex flex-col">
+                <h2 className="text-lg font-bold mb-2">{selectedFile || 'Select a file'}</h2>
+                <div ref={editorRef} className="flex-1 bg-gray-800 rounded" style={{ height: 'calc(100vh - 120px)' }} />
+              </div>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    ReactDOM.render(<App />, document.getElementById('root'));
+  </script>
+</body>
+</html>
