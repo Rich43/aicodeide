@@ -5,6 +5,7 @@ const { OpenAI } = require('openai');
 const jsdiff = require('diff');
 const Database = require('better-sqlite3');
 const { spawn } = require('child_process'); // For Python validation
+const { validatePythonCode } = require('./validatePythonCode');
 
 const app = express();
 const server = require('http').createServer(app);
@@ -52,45 +53,6 @@ const logEvent = (ws, message) => {
     console.log(`[${timestamp}] ${message}`); // Log to console if WS not available
   }
 };
-
-// Function to validate Python code for syntax and PEP8
-async function validatePythonCode(code, ws) {
-    let errors = [];
-    try {
-        // Syntax validation using python -m py_compile
-        const pyCompile = spawn('python', ['-m', 'py_compile', '-'], { stdio: ['pipe', 'pipe', 'pipe'] });
-        pyCompile.stdin.write(code);
-        pyCompile.stdin.end();
-
-        const [stdoutPyCompile, stderrPyCompile] = await Promise.all([
-            new Promise(resolve => { pyCompile.stdout.on('data', data => resolve(data.toString())); }),
-            new Promise(resolve => { pyCompile.stderr.on('data', data => resolve(data.toString())); })
-        ]);
-
-        if (stderrPyCompile) {
-            errors.push(`Syntax Error: ${stderrPyCompile.trim()}`);
-        }
-
-        // PEP8 validation using pycodestyle
-        const pycodestyle = spawn('pycodestyle', ['-'], { stdio: ['pipe', 'pipe', 'pipe'] });
-        pycodestyle.stdin.write(code);
-        pycodestyle.stdin.end();
-
-        const [stdoutPycodestyle, stderrPycodestyle] = await Promise.all([
-            new Promise(resolve => { pycodestyle.stdout.on('data', data => resolve(data.toString())); }),
-            new Promise(resolve => { pycodestyle.stderr.on('data', data => resolve(data.toString())); })
-        ]);
-
-        if (stdoutPycodestyle) {
-            errors.push(`PEP8 Violations:\n${stdoutPycodestyle.trim()}`);
-        }
-
-    } catch (e) {
-        logEvent(ws, `Python validation tool error: ${e.message}. Make sure 'python' and 'pycodestyle' are installed and in PATH.`);
-        errors.push(`Internal validator error: ${e.message}`);
-    }
-    return errors;
-}
 
 
 async function callAI(messages, settings, ws, maxRetries = 3) {
@@ -268,7 +230,7 @@ wss.on('connection', (ws) => {
 
       // Python code validation and arguing
       if (response.codeBlock && response.codeBlock.language === 'python' && settings.autoArgueWithAI) {
-          const validationErrors = await validatePythonCode(response.codeBlock.content, ws);
+          const validationErrors = await validatePythonCode(response.codeBlock.content, ws, logEvent);
           if (validationErrors.length > 0) {
               const errorMessage = `AI-generated Python code has issues:\n${validationErrors.join('\n')}\nPlease fix these and provide valid and PEP8 compliant Python code.`;
               logEvent(ws, `Auto-arguing with AI: ${errorMessage}`);
