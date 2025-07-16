@@ -3,9 +3,13 @@
   "version": "1.0.0",
   "description": "Frontend static files for Coding AI IDE with project selection and AI arguing features.",
   "scripts": {
-    "start": "serve ."
+    "start": "serve .",
+    "test:e2e": "cypress run"
   },
   "dependencies": {
     "serve": "^14.2.0"
+  },
+  "devDependencies": {
+    "cypress": "^14.5.2"
   }
 }
