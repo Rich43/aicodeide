@@ -3,7 +3,14 @@ const express = require('express');
 const WebSocket = require('ws');
 const { OpenAI } = require('openai');
 const jsdiff = require('diff');
-const Database = require('better-sqlite3');
+let Database, db;
+try {
+  Database = require('better-sqlite3');
+  db = new Database('logs.db');
+} catch (e) {
+  console.warn('better-sqlite3 not available:', e.message);
+  db = { exec: () => {}, prepare: () => ({ run: () => {}, get: () => {}, all: () => [] }) };
+}
 const { spawn } = require('child_process'); // For Python validation
 
 const app = express();
@@ -11,7 +18,6 @@ const server = require('http').createServer(app);
 const wss = new WebSocket.Server({ server });
 
 // Initialize SQLite database
-const db = new Database('logs.db');
 db.exec(`
   CREATE TABLE IF NOT EXISTS logs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
