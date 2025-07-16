@@ -22,7 +22,7 @@
     const { useState, useEffect, useRef } = React;
     const { Sortable } = ReactSortable;
 
-    function FileTree({ files, onSelect, onCreateFile, onCreateFolder, onRename, onDelete, currentProjectId }) {
+    function FileTree({ files, onSelect, onCreateFile, onCreateFolder, onRename, onDelete, currentProjectId, selectedFile }) {
       const buildTree = (files) => {
         const tree = {};
         Object.keys(files).forEach(path => {
@@ -66,18 +66,7 @@
         ));
       };
 
-      // Ensure selectedFile is available in scope for styling
-      const selectedFile = useAppSelectedFile(); // Placeholder for accessing selectedFile from App component
-      
       return <div>{renderTree(buildTree(files))}</div>;
-    }
-
-    // Helper to get selectedFile from App's context (could use React.context or pass directly)
-    // For simplicity, directly pass selectedFile to FileTree prop for now.
-    function useAppSelectedFile() {
-      // This function would typically get the selectedFile from a context or a prop passed down.
-      // For this example, assume selectedFile is passed to FileTree directly.
-      return null;
     }
 
     function App() {
