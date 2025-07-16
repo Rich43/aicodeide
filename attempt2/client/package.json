@@ -1,0 +1,11 @@
+{
+  "name": "coding-ai-ide-frontend",
+  "version": "1.0.0",
+  "description": "Frontend static files for Coding AI IDE with project selection and AI arguing features.",
+  "scripts": {
+    "start": "serve ."
+  },
+  "dependencies": {
+    "serve": "^14.2.0"
+  }
+}

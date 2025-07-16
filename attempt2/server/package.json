@@ -1,0 +1,18 @@
+{
+  "name": "coding-ai-ide-backend",
+  "version": "1.0.0",
+  "description": "Backend server for Coding AI IDE using WebSocket, Express, SQLite, and AI providers with project management and Python validation.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "better-sqlite3": "^8.0.1",
+    "diff": "^5.1.0",
+    "dotenv": "^16.3.1",
+    "express": "^4.19.2",
+    "openai": "^4.29.2",
+    "ws": "^8.15.1"
+    // child_process is built-in to Node.js, so no explicit npm install needed for it.
+  }
+}

@@ -1,0 +1,588 @@
+<body>
+  <div id="root"></div>
+  <script type="text/babel">
+    const { useState, useEffect, useRef } = React;
+    const { Sortable } = ReactSortable;
+
+    function FileTree({ files, onSelect, onCreateFile, onCreateFolder, onRename, onDelete, currentProjectId }) {
+      const buildTree = (files) => {
+        const tree = {};
+        Object.keys(files).forEach(path => {
+          const parts = path.split('/').filter(p => p);
+          let current = tree;
+          parts.forEach((part, i) => {
+            if (i === parts.length - 1) {
+              current[part] = { path, isFile: true, language: files[path].language }; // Pass language
+            } else {
+              current[part] = current[part] || { children: {} };
+              current = current[part].children;
+            }
+          });
+        });
+        return tree;
+      };
+
+      const renderTree = (tree, prefix = '') => {
+        return Object.entries(tree).map(([name, node]) => (
+          <div key={`${prefix}/${name}`}>
+            {node.isFile ? (
+              <div
+                className={`p-2 cursor-pointer rounded ${selectedFile === node.path ? 'bg-blue-600' : 'hover:bg-gray-700'}`}
+                onClick={() => onSelect(node.path)}
+              >
+                {name} ({node.language})
+                <button onClick={(e) => { e.stopPropagation(); onRename(node.path); }} className="ml-2 text-xs text-gray-400">Rename</button>
+                <button onClick={(e) => { e.stopPropagation(); onDelete(node.path); }} className="ml-2 text-xs text-red-400">Delete</button>
+              </div>
+            ) : (
+              <div>
+                <div className="p-2 font-bold">{name}</div>
+                <div className="ml-4">
+                  <button onClick={(e) => { e.stopPropagation(); onCreateFile(`${prefix}/${name}`); }} className="text-xs text-blue-400">+ File</button>
+                  <button onClick={(e) => { e.stopPropagation(); onCreateFolder(`${prefix}/${name}`); }} className="ml-2 text-xs text-blue-400">+ Folder</button>
+                  {renderTree(node.children, `${prefix}/${name}`)}
+                </div>
+              </div>
+            )}
+          </div>
+        ));
+      };
+
+      // Ensure selectedFile is available in scope for styling
+      const selectedFile = useAppSelectedFile(); // Placeholder for accessing selectedFile from App component
+      
+      return <div>{renderTree(buildTree(files))}</div>;
+    }
+
+    // Helper to get selectedFile from App's context (could use React.context or pass directly)
+    // For simplicity, directly pass selectedFile to FileTree prop for now.
+    function useAppSelectedFile() {
+      // This function would typically get the selectedFile from a context or a prop passed down.
+      // For this example, assume selectedFile is passed to FileTree directly.
+      return null;
+    }
+
+    function App() {
+      const [files, setFiles] = useState({});
+      const [selectedFile, setSelectedFile] = useState(null);
+      const [code, setCode] = useState('');
+      const [chatMessages, setChatMessages] = useState([]);
+      const [chatInput, setChatInput] = useState('');
+      const [systemLogs, setSystemLogs] = useState([]);
+      const [activeTab, setActiveTab] = useState('chat');
+      const [projects, setProjects] = useState([]); // New state for projects
+      const [currentProjectId, setCurrentProjectId] = useState(null); // New state for current project ID
+      const [settings, setSettings] = useState({
+        apiKeys: {
+          xai: localStorage.getItem('xaiApiKey') || '',
+          openai: localStorage.getItem('openaiApiKey') || '',
+          anthropic: localStorage.getItem('anthropicApiKey') || '',
+          openrouter: localStorage.getItem('openrouterApiKey') || '',
+          openrouterModel: localStorage.getItem('openrouterModel') || 'meta-llama/llama-3.1-8b-instruct:free',
+        },
+        failoverOrder: JSON.parse(localStorage.getItem('failoverOrder')) || ['xAI', 'OpenAI', 'Anthropic', 'OpenRouter'],
+        autoApplyCode: JSON.parse(localStorage.getItem('autoApplyCode')) || false,
+        autoArgueWithAI: JSON.parse(localStorage.getItem('autoArgueWithAI')) || false, // New setting
+      });
+      const [showSettings, setShowSettings] = useState(!Object.values(settings.apiKeys).some(key => key));
+      const [rateLimit, setRateLimit] = useState({ remaining: null, limit: null });
+      const editorRef = useRef(null);
+      const monacoRef = useRef(null);
+      const wsRef = useRef(null);
+      const currentFileLanguage = useRef('javascript'); // To store current file's language for Monaco
+
+      useEffect(() => {
+        wsRef.current = new WebSocket('ws://localhost:3000');
+        wsRef.current.onopen = () => {
+          console.log('WebSocket connected');
+          setSystemLogs(prev => [...prev, `[${new Date().toISOString()}] WebSocket connected`]);
+          if (Object.values(settings.apiKeys).some(key => key)) {
+            wsRef.current.send(JSON.stringify({ type: 'setSettings', settings }));
+          }
+          wsRef.current.send(JSON.stringify({ type: 'listProjects' })); // Request project list on connect
+        };
+        wsRef.current.onmessage = (event) => {
+          const { type, files, path, diff, content, provider, newPath, success, status, message, codeBlock, rateLimit, projects, projectId, projectName, currentProjectId: serverCurrentProjectId, language } = JSON.parse(event.data);
+          
+          if (type === 'init') {
+            setFiles(files);
+            setCurrentProjectId(serverCurrentProjectId);
+            // After loading files, select the first one if available
+            if (Object.keys(files).length > 0 && !selectedFile) { // Only set if no file is currently selected
+                setSelectedFile(Object.keys(files)[0]);
+            }
+          } else if (type === 'projectsList') {
+            setProjects(projects);
+            // Auto-load the first project if none is selected and projects exist
+            if (!currentProjectId && projects.length > 0) {
+                wsRef.current.send(JSON.stringify({ type: 'loadProject', projectId: projects[0].id }));
+            }
+          } else if (type === 'projectCreated') {
+            setCurrentProjectId(projectId);
+            setProjects(prev => [...prev, { id: projectId, name: projectName }]);
+            // Files for new project will come in via 'init' message
+          } else if (type === 'diff' && path === selectedFile) {
+            const newContent = window.diff.applyPatch(code, diff);
+            setCode(newContent);
+            if (monacoRef.current) monacoRef.current.setValue(newContent);
+            if (language) {
+                monacoRef.current.getModel().setLanguage(language);
+                currentFileLanguage.current = language;
+            }
+          } else if (type === 'chat') {
+            setChatMessages(prev => [...prev, { role: 'ai', content, provider, codeBlock, path: selectedFile }]);
+            setRateLimit(rateLimit || { remaining: null, limit: null });
+          } else if (type === 'chatStatus') {
+            setChatMessages(prev => [...prev, { role: 'system', content: status }]);
+          } else if (type === 'log') {
+            setSystemLogs(prev => [...prev, message]);
+          } else if (type === 'createFile' || type === 'createFolder') {
+            // Re-fetch project files to ensure accurate state from DB
+            wsRef.current.send(JSON.stringify({ type: 'loadProject', projectId: currentProjectId }));
+          } else if (type === 'rename') {
+             // Re-fetch project files to ensure accurate state from DB
+            wsRef.current.send(JSON.stringify({ type: 'loadProject', projectId: currentProjectId }));
+          } else if (type === 'delete') {
+            // Re-fetch project files to ensure accurate state from DB
+            wsRef.current.send(JSON.stringify({ type: 'loadProject', projectId: currentProjectId }));
+            setSelectedFile(null); // Deselect if the current file was deleted
+          } else if (type === 'settingsSet' && success) {
+            setShowSettings(false);
+          } else if (type === 'error') {
+            setSystemLogs(prev => [...prev, `[${new Date().toISOString()}] ERROR: ${message}`]);
+            alert(`Error: ${message}`); // Alert user about critical errors
+          } else if (type === 'export') {
+            const zip = new JSZip();
+            Object.entries(files).forEach(([path, file]) => {
+              const parts = path.split('/').filter(p => p);
+              let folder = zip;
+              parts.slice(0, -1).forEach(part => {
+                folder = folder.folder(part);
+              });
+              folder.file(parts[parts.length - 1], file.content);
+            });
+            zip.generateAsync({ type: 'blob' }).then(content => {
+              saveAs(content, 'project.zip');
+            });
+          }
+        };
+        return () => wsRef.current.close();
+      }, [currentProjectId]); // Re-run effect if currentProjectId changes to reload files
+
+      useEffect(() => {
+        require.config({ paths: { 'vs': '[https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.34.0/min/vs](https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.34.0/min/vs)' } });
+        require(['vs/editor/editor.main'], () => {
+          monacoRef.current = monaco.editor.create(editorRef.current, {
+            value: code,
+            language: 'javascript', // Default language
+            theme: 'vs-dark',
+            automaticLayout: true,
+          });
+          monacoRef.current.onDidChangeModelContent(() => {
+            const newCode = monacoRef.current.getValue();
+            setCode(newCode);
+            if (selectedFile && currentProjectId) {
+              wsRef.current.send(JSON.stringify({ type: 'update', projectId: currentProjectId, path: selectedFile, content: newCode }));
+            }
+          });
+        });
+        return () => {
+            if (monacoRef.current) {
+                monacoRef.current.dispose();
+            }
+        };
+      }, []);
+
+      useEffect(() => {
+        if (selectedFile && currentProjectId) {
+          // Instead of fetch, request file content via WebSocket now
+          // This is a simplification; ideally, the 'init' message already populates files
+          // and direct content is in `files[selectedFile].content`
+          // For now, if init doesn't have it, assume it's in `files` state.
+          const fileData = files[selectedFile];
+          if (fileData) {
+            setCode(fileData.content);
+            const lang = fileData.language || (selectedFile.endsWith('.css') ? 'css' : selectedFile.endsWith('.js') ? 'javascript' : selectedFile.endsWith('.py') ? 'python' : 'plaintext');
+            if (monacoRef.current) {
+                monacoRef.current.setValue(fileData.content);
+                monacoRef.current.getModel().setLanguage(lang);
+                currentFileLanguage.current = lang;
+            }
+          } else {
+             setCode('');
+             if (monacoRef.current) {
+                 monacoRef.current.setValue('');
+                 monacoRef.current.getModel().setLanguage('plaintext');
+                 currentFileLanguage.current = 'plaintext';
+             }
+          }
+        } else {
+            setCode('');
+            if (monacoRef.current) {
+                monaco.editor.setModel(null); // Clear editor content
+            }
+        }
+      }, [selectedFile, currentProjectId, files]); // Depend on files to react to project content changes
+
+      const handleFileSelect = (path) => {
+        setSelectedFile(path);
+      };
+
+      const handleCreateProject = () => {
+          const projectName = prompt('Enter new project name:');
+          if (projectName) {
+              wsRef.current.send(JSON.stringify({ type: 'createProject', projectName }));
+          }
+      };
+
+      const handleLoadProject = (e) => {
+          const projectId = e.target.value;
+          if (projectId) {
+              wsRef.current.send(JSON.stringify({ type: 'loadProject', projectId: parseInt(projectId) }));
+              setSelectedFile(null); // Clear selected file when loading new project
+          }
+      };
+
+      const handleCreateFile = (parentPath) => {
+        if (!currentProjectId) { alert('Please select or create a project first.'); return; }
+        const fileName = prompt('Enter file name (e.g., newfile.js):');
+        if (fileName) {
+          const path = `${parentPath}/${fileName}`;
+          wsRef.current.send(JSON.stringify({ type: 'createFile', projectId: currentProjectId, path }));
+        }
+      };
+
+      const handleCreateFolder = (parentPath) => {
+        if (!currentProjectId) { alert('Please select or create a project first.'); return; }
+        const folderName = prompt('Enter folder name:');
+        if (folderName) {
+          const path = `${parentPath}/${folderName}`;
+          wsRef.current.send(JSON.stringify({ type: 'createFolder', projectId: currentProjectId, path }));
+        }
+      };
+
+      const handleRename = (path) => {
+        if (!currentProjectId) { alert('No project selected.'); return; }
+        const newPath = prompt('Enter new path:', path);
+        if (newPath && newPath !== path) {
+          wsRef.current.send(JSON.stringify({ type: 'rename', projectId: currentProjectId, path, newPath }));
+        }
+      };
+
+      const handleDelete = (path) => {
+        if (!currentProjectId) { alert('No project selected.'); return; }
+        if (confirm(`Delete ${path}? This will delete all files/folders within this path.`)) {
+          wsRef.current.send(JSON.stringify({ type: 'delete', projectId: currentProjectId, path }));
+        }
+      };
+
+      const handleChatSubmit = (e) => {
+        e.preventDefault();
+        if (!chatInput.trim()) return;
+        setChatMessages(prev => [...prev, { role: 'user', content: chatInput }]);
+        wsRef.current.send(JSON.stringify({ type: 'chat', chatInput, path: selectedFile, projectId: currentProjectId })); // Send project ID
+        setChatInput('');
+      };
+
+      const handleApplyCode = (codeBlockContent, filePath) => {
+        if (selectedFile && codeBlockContent && currentProjectId) {
+          wsRef.current.send(JSON.stringify({ type: 'applyCode', projectId: currentProjectId, path: selectedFile, content: codeBlockContent }));
+        }
+      };
+
+      const handleSettingsSubmit = (e) => {
+        e.preventDefault();
+        localStorage.setItem('xaiApiKey', settings.apiKeys.xai);
+        localStorage.setItem('openaiApiKey', settings.apiKeys.openai);
+        localStorage.setItem('anthropicApiKey', settings.apiKeys.anthropic);
+        localStorage.setItem('openrouterApiKey', settings.apiKeys.openrouter);
+        localStorage.setItem('openrouterModel', settings.apiKeys.openrouterModel);
+        localStorage.setItem('failoverOrder', JSON.stringify(settings.failoverOrder));
+        localStorage.setItem('autoApplyCode', JSON.stringify(settings.autoApplyCode));
+        localStorage.setItem('autoArgueWithAI', JSON.stringify(settings.autoArgueWithAI)); // Save new setting
+        wsRef.current.send(JSON.stringify({ type: 'setSettings', settings }));
+      };
+
+      if (showSettings) {
+        return (
+          <div className="flex items-center justify-center h-screen bg-gray-900 text-white">
+            <div className="bg-gray-800 p-6 rounded-lg shadow-lg w-96">
+              <h2 className="text-xl font-bold mb-4">Settings</h2>
+              <form onSubmit={handleSettingsSubmit}>
+                <div className="mb-4">
+                  <label className="block mb-1">xAI API Key</label>
+                  <input
+                    type="text"
+                    value={settings.apiKeys.xai}
+                    onChange={(e) => setSettings({ ...settings, apiKeys: { ...settings.apiKeys, xai: e.target.value } })}
+                    className="w-full p-2 bg-gray-700 text-white rounded"
+                    placeholder="xAI API Key (optional)"
+                  />
+                </div>
+                <div className="mb-4">
+                  <label className="block mb-1">OpenAI API Key</label>
+                  <input
+                    type="text"
+                    value={settings.apiKeys.openai}
+                    onChange={(e) => setSettings({ ...settings, apiKeys: { ...settings.apiKeys, openai: e.target.value } })}
+                    className="w-full p-2 bg-gray-700 text-white rounded"
+                    placeholder="OpenAI API Key (optional)"
+                  />
+                </div>
+                <div className="mb-4">
+                  <label className="block mb-1">Anthropic API Key</label>
+                  <input
+                    type="text"
+                    value={settings.apiKeys.anthropic}
+                    onChange={(e) => setSettings({ ...settings, apiKeys: { ...settings.apiKeys, anthropic: e.target.value } })}
+                    className="w-full p-2 bg-gray-700 text-white rounded"
+                    placeholder="Anthropic API Key (optional)"
+                  />
+                </div>
+                <div className="mb-4">
+                  <label className="block mb-1">OpenRouter API Key</label>
+                  <input
+                    type="text"
+                    value={settings.apiKeys.openrouter}
+                    onChange={(e) => setSettings({ ...settings, apiKeys: { ...settings.apiKeys, openrouter: e.target.value } })}
+                    className="w-full p-2 bg-gray-700 text-white rounded"
+                    placeholder="OpenRouter API Key (optional)"
+                  />
+                </div>
+                <div className="mb-4">
+                  <label className="block mb-1">OpenRouter Model</label>
+                  <select
+                    value={settings.apiKeys.openrouterModel}
+                    onChange={(e) => setSettings({ ...settings, apiKeys: { ...settings.apiKeys, openrouterModel: e.target.value } })}
+                    className="w-full p-2 bg-gray-700 text-white rounded"
+                  >
+                    <option value="meta-llama/llama-3.1-8b-instruct:free">Llama 3.1 8B (Free)</option>
+                    <option value="xai/grok-3">Grok-3</option>
+                    <option value="anthropic/claude-3.5-sonnet">Claude 3.5 Sonnet</option>
+                  </select>
+                </div>
+                <div className="mb-4">
+                  <label className="block mb-1">Failover Order</label>
+                  <Sortable
+                    list={settings.failoverOrder.map(id => ({ id }))}
+                    setList={(newList) => setSettings({ ...settings, failoverOrder: newList.map(item => item.id) })}
+                    className="bg-gray-700 rounded"
+                  >
+                    {settings.failoverOrder.map(provider => (
+                      <div key={provider} className="p-2 border-b border-gray-600 cursor-move">
+                        {provider}
+                      </div>
+                    ))}
+                  </Sortable>
+                </div>
+                <div className="mb-4">
+                  <label className="flex items-center">
+                    <input
+                      type="checkbox"
+                      checked={settings.autoApplyCode}
+                      onChange={(e) => setSettings({ ...settings, autoApplyCode: e.target.checked })}
+                      className="mr-2"
+                    />
+                    Auto-Apply Code Suggestions
+                  </label>
+                </div>
+                <div className="mb-4"> {/* New setting */}
+                  <label className="flex items-center">
+                    <input
+                      type="checkbox"
+                      checked={settings.autoArgueWithAI}
+                      onChange={(e) => setSettings({ ...settings, autoArgueWithAI: e.target.checked })}
+                      className="mr-2"
+                    />
+                    Auto-Argue with AI (Python only)
+                  </label>
+                </div>
+                <button type="submit" className="w-full bg-blue-600 hover:bg-blue-700 p-2 rounded">
+                  Save
+                </button>
+              </form>
+              <p className="mt-2 text-sm text-gray-400">
+                Get API keys from <a href="[https://console.x.ai](https://console.x.ai)" className="text-blue-400">xAI</a>,{' '}
+                <a href="[https://platform.openai.com](https://platform.openai.com)" className="text-blue-400">OpenAI</a>,{' '}
+                <a href="[https://console.anthropic.com](https://console.anthropic.com)" className="text-blue-400">Anthropic</a>, or{' '}
+                <a href="[https://openrouter.ai](https://openrouter.ai)" className="text-blue-400">OpenRouter</a>.
+              </p>
+            </div>
+          </div>
+        );
+      }
+
+      return (
+        <div className="flex h-screen bg-gray-900 text-white">
+          <div className="w-1/4 bg-gray-800 p-4 overflow-auto">
+            <div className="flex justify-between mb-2">
+              <h2 className="text-lg font-bold">File Tree</h2>
+              <div>
+                <button
+                  onClick={() => setShowSettings(true)}
+                  className="mr-2 bg-yellow-600 hover:bg-yellow-700 px-2 py-1 rounded text-sm"
+                >
+                  Settings
+                </button>
+                <button
+                  onClick={() => wsRef.current.send(JSON.stringify({ type: 'export' }))}
+                  className="bg-green-600 hover:bg-green-700 px-2 py-1 rounded text-sm"
+                >
+                  Export Project
+                </button>
+              </div>
+            </div>
+            {/* Project Selection / Management */}
+            <div className="mb-4">
+                <div className="flex justify-between items-center mb-2">
+                    <h3 className="text-md font-bold">Projects</h3>
+                    <button
+                        onClick={handleCreateProject}
+                        className="bg-purple-600 hover:bg-purple-700 text-white px-2 py-1 rounded text-sm"
+                    >
+                        New Project
+                    </button>
+                </div>
+                <select
+                    onChange={handleLoadProject}
+                    value={currentProjectId || ''}
+                    className="w-full p-2 bg-gray-700 text-white rounded mb-2"
+                >
+                    <option value="">Select Project</option>
+                    {projects.map(project => (
+                        <option key={project.id} value={project.id}>{project.name}</option>
+                    ))}
+                </select>
+                {currentProjectId && (
+                    <p className="text-sm text-gray-400">Current Project: {projects.find(p => p.id === currentProjectId)?.name}</p>
+                )}
+            </div>
+
+            <button
+              onClick={() => handleCreateFile('')}
+              className="mb-2 bg-blue-600 hover:bg-blue-700 text-white px-2 py-1 rounded"
+            >
+              New File
+            </button>
+            <button
+              onClick={() => handleCreateFolder('')}
+              className="mb-2 bg-blue-600 hover:bg-blue-700 text-white px-2 py-1 rounded"
+            >
+              New Folder
+            </button>
+            {currentProjectId ? (
+                <FileTree
+                    files={files}
+                    onSelect={handleFileSelect}
+                    onCreateFile={handleCreateFile}
+                    onCreateFolder={handleCreateFolder}
+                    onRename={handleRename}
+                    onDelete={handleDelete}
+                    selectedFile={selectedFile} // Pass selectedFile to FileTree
+                />
+            ) : (
+                <p className="text-gray-400 mt-4">Select or create a project to view files.</p>
+            )}
+          </div>
+          <div className="flex flex-col w-3/4">
+            <div className="flex flex-1 overflow-hidden">
+              <div className="w-1/2 p-4 bg-gray-700 flex flex-col">
+                <div className="flex mb-2">
+                  <button
+                    onClick={() => setActiveTab('chat')}
+                    className={`px-4 py-1 ${activeTab === 'chat' ? 'bg-blue-600' : 'bg-gray-600'} rounded-l`}
+                  >
+                    Chat
+                  </button>
+                  <button
+                    onClick={() => setActiveTab('logs')}
+                    className={`px-4 py-1 ${activeTab === 'logs' ? 'bg-blue-600' : 'bg-gray-600'} rounded-r`}
+                  >
+                    System Log
+                  </button>
+                </div>
+                {activeTab === 'chat' ? (
+                  <>
+                    <h2 className="text-lg font-bold mb-2">Chat History</h2>
+                    {rateLimit.remaining !== null && rateLimit.limit !== null && (
+                      <div className="mb-2">
+                        <div className="text-sm">API Rate Limit: {rateLimit.remaining}/{rateLimit.limit}</div>
+                        <div className="w-full bg-gray-600 rounded h-2">
+                          <div
+                            className="bg-blue-600 h-2 rounded"
+                            style={{ width: `${(rateLimit.remaining / rateLimit.limit) * 100}%` }}
+                          />
+                        </div>
+                      </div>
+                    )}
+                    <div className="flex-1 overflow-auto mb-4 p-2 bg-gray-800 rounded">
+                      {chatMessages.map((msg, index) => (
+                        <div
+                          key={index}
+                          className={`mb-2 ${
+                            msg.role === 'user' ? 'text-blue-300' :
+                            msg.role === 'system' ? 'text-yellow-300' :
+                            'text-green-300'
+                          }`}
+                        >
+                          <div className="flex items-start">
+                            <div className="flex-1">
+                              <strong>
+                                {msg.role === 'user' ? 'You' :
+                                 msg.role === 'system' ? 'System' :
+                                 `AI (${msg.provider || 'Unknown'})`}:
+                              </strong>{' '}
+                              {msg.content}
+                            </div>
+                            {msg.role === 'ai' && msg.codeBlock && !settings.autoApplyCode && selectedFile && (
+                              <button
+                                onClick={() => handleApplyCode(msg.codeBlock.content, msg.path)} // Pass content of codeBlock
+                                className="ml-2 bg-blue-600 hover:bg-blue-700 px-2 py-1 rounded text-sm"
+                              >
+                                Apply Code
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                    <form onSubmit={handleChatSubmit} className=" estejam flex">
+                      <input
+                        type="text"
+                        value={chatInput}
+                        onChange={(e) => setChatInput(e.target.value)}
+                        className="flex-1 p-2 bg-gray-800 text-white rounded-l focus:outline-none"
+                        placeholder="Ask AI..."
+                        disabled={!currentProjectId}
+                      />
+                      <button type="submit" className="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded-r" disabled={!currentProjectId}>
+                        Send
+                      </button>
+                    </form>
+                  </>
+                ) : (
+                  <>
+                    <h2 className="text-lg font-bold mb-2">System Log</h2>
+                    <div className="flex-1 overflow-auto mb-4 p-2 bg-gray-800 rounded">
+                      {systemLogs.map((log, index) => (
+                        <div key={index} className="mb-2 text-gray-300">
+                          {log}
+                        </div>
+                      ))}
+                    </div>
+                  </>
+                )}
+              </div>
+              <div className="w-1/2 p-4 flex flex-col">
+                <h2 className="text-lg font-bold mb-2">{selectedFile || 'Select a file'}</h2>
+                <div ref={editorRef} className="flex-1 bg-gray-800 rounded" style={{ height: 'calc(100vh - 120px)' }} />
+              </div>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    ReactDOM.render(<App />, document.getElementById('root'));
+  </script>
+</body>
