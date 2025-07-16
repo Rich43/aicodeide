@@ -42,3 +42,4 @@ A web-based Integrated Development Environment (IDE) designed for coding with AI
 - **pycodestyle**: Install it globally on the server machine for PEP8 validation:
   ```bash
   pip install pycodestyle
+  ```
