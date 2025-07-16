@@ -338,6 +338,12 @@ wss.on('connection', (ws) => {
       ws.send(JSON.stringify({ type: 'export', files: projectFilesMap }));
     }
   });
+
+  ws.on('close', () => {
+    clientSettings.delete(ws);
+    clientCurrentProject.delete(ws);
+    logEvent(null, 'Client disconnected');
+  });
 });
 
 app.get('/file/:path', (req, res) => {
