@@ -54,6 +54,11 @@ A web-based Integrated Development Environment (IDE) designed for coding with AI
    node server.js
    ```
    The server runs on `http://localhost:3000` and WebSocket on `ws://localhost:3000`.
+   To fetch a file via HTTP, include the project ID in the query string:
+   ```bash
+   curl "http://localhost:3000/file/%2Findex.js?projectId=1"
+   ```
+
 
 ### Frontend Setup
 1. Navigate to the `client` directory and host it using a static server:

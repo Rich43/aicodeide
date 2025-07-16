@@ -340,12 +340,13 @@ wss.on('connection', (ws) => {
 
 app.get('/file/:path', (req, res) => {
   const path = decodeURIComponent(req.params.path);
-  const currentProjectId = clientCurrentProject.get(req.ws); // This might not work reliably with HTTP GET as it's not a WebSocket connection. Better to use a WebSocket message for file content retrieval based on active project.
-  if (!currentProjectId) {
+  const projectId = parseInt(req.query.projectId, 10);
+  if (!projectId) {
     return res.status(400).json({ content: '', version: 0, error: 'No project selected' });
   }
-  const file = db.prepare('SELECT content, version, language FROM files WHERE project_id = ? AND path = ?').get(currentProjectId, path);
+  const file = db.prepare('SELECT content, version, language FROM files WHERE project_id = ? AND path = ?').get(projectId, path);
   res.json(file || { content: '', version: 0, language: 'plaintext' });
 });
 
 server.listen(3000, () => console.log('Server running on port 3000'));
+
