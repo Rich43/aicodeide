@@ -53,8 +53,12 @@ A web-based Integrated Development Environment (IDE) designed for coding with AI
    ```bash
    node server.js
    ```
-   The server runs on `http://localhost:3000` and WebSocket on `ws://localhost:3000`.
+The server runs on `http://localhost:3000` and WebSocket on `ws://localhost:3000`.
 5. To run the tests, install Python 3 and `pycodestyle`. See the `Prerequisites` section of `server/README.md` for details.
+6. Retrieve a file's contents via HTTP using:
+   ```bash
+   curl "http://localhost:3000/file/<path>?projectId=<id>"
+   ```
 
 ### Frontend Setup
 1. Navigate to the `client` directory and host it using a static server:
