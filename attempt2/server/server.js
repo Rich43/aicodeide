@@ -98,7 +98,7 @@ async function callAI(messages, settings, ws, maxRetries = 3) {
   const providers = [
     {
       name: 'xAI',
-      client: new OpenAI({ apiKey: apiKeys.xai, baseURL: '[https://api.x.ai/v1](https://api.x.ai/v1)' }),
+      client: new OpenAI({ apiKey: apiKeys.xai, baseURL: 'https://api.x.ai/v1' }),
       model: 'grok-2-1212',
     },
     {
@@ -108,13 +108,13 @@ async function callAI(messages, settings, ws, maxRetries = 3) {
     },
     {
       name: 'Anthropic',
-      client: new OpenAI({ apiKey: apiKeys.anthropic, baseURL: '[https://api.anthropic.com/v1](https://api.anthropic.com/v1)' }),
+      client: new OpenAI({ apiKey: apiKeys.anthropic, baseURL: 'https://api.anthropic.com/v1' }),
       model: 'claude-3-5-sonnet-20241022',
       headers: { 'x-api-key': apiKeys.anthropic, 'anthropic-version': '2023-06-01' },
     },
     {
       name: 'OpenRouter',
-      client: new OpenAI({ apiKey: apiKeys.openrouter, baseURL: '[https://openrouter.ai/api/v1](https://openrouter.ai/api/v1)' }),
+      client: new OpenAI({ apiKey: apiKeys.openrouter, baseURL: 'https://openrouter.ai/api/v1' }),
       model: apiKeys.openrouterModel || 'meta-llama/llama-3.1-8b-instruct:free',
       headers: { 'HTTP-Referer': 'http://localhost:3000', 'X-Title': 'Coding AI IDE' },
     },
