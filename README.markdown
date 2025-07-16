@@ -42,10 +42,11 @@ A web-based Integrated Development Environment (IDE) designed for coding with AI
   - **OpenRouter**: Register at [OpenRouter](https://openrouter.ai) ($1–$5 free credits).
 
 ### Backend Setup
-1. Clone the repository or copy `server.js`.
+1. Clone the repository and navigate to the `server` directory.
 2. Install dependencies:
    ```bash
-   npm install express ws openai diff better-sqlite3 dotenv
+   cd server
+   npm install
    ```
 3. Create a `.env` file with any environment-specific configurations (optional, as API keys are set via the frontend).
 4. Run the server:
@@ -55,13 +56,13 @@ A web-based Integrated Development Environment (IDE) designed for coding with AI
    The server runs on `http://localhost:3000` and WebSocket on `ws://localhost:3000`.
 
 ### Frontend Setup
-1. Copy `index.html` to a directory.
-2. Host using a static server:
+1. Navigate to the `client` directory and host it using a static server:
    ```bash
+   cd client
    npx serve
    ```
-3. Access the IDE at `http://localhost:3000` (or the port provided by the server).
-4. Ensure WebSocket connects to `ws://localhost:3000`.
+2. Access the IDE at `http://localhost:3000` (or the port provided by the server).
+3. Ensure WebSocket connects to `ws://localhost:3000`.
 
 ### Database
 - The backend automatically creates `logs.db` (SQLite) on first run to store system logs.
