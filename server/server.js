@@ -89,11 +89,13 @@ async function callAI(messages, settings, ws, maxRetries = 3) {
     ws.send(JSON.stringify({ type: 'chatStatus', status: `Processing with ${provider.name}...` }));
     for (let attempt = 0; attempt < maxRetries; attempt++) {
       try {
-        const response = await provider.client.chat.completions.create({
-          model: provider.model,
-          messages,
-          ...(provider.headers || {}),
-        });
+        const response = await provider.client.chat.completions.create(
+          {
+            model: provider.model,
+            messages,
+          },
+          provider.headers ? { headers: provider.headers } : undefined
+        );
         const content = response.choices[0].message.content;
         logEvent(ws, `${provider.name} API call succeeded`);
         // Extract code block if present
@@ -348,4 +350,8 @@ app.get('/file/:path', (req, res) => {
   res.json(file || { content: '', version: 0, language: 'plaintext' });
 });
 
-server.listen(3000, () => console.log('Server running on port 3000'));
+if (require.main === module) {
+  server.listen(3000, () => console.log("Server running on port 3000"));
+}
+
+module.exports = { callAI };
