@@ -4,7 +4,8 @@
   "description": "Backend server for Coding AI IDE using WebSocket, Express, SQLite, and AI providers with project management and Python validation.",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "test": "node ../tests/test_validatePythonCode.js"
   },
   "dependencies": {
     "better-sqlite3": "^8.0.1",
