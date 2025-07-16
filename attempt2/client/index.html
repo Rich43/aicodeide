@@ -170,7 +170,7 @@
       }, [currentProjectId]); // Re-run effect if currentProjectId changes to reload files
 
       useEffect(() => {
-        require.config({ paths: { 'vs': '[https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.34.0/min/vs](https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.34.0/min/vs)' } });
+        require.config({ paths: { 'vs': 'https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.34.0/min/vs' } });
         require(['vs/editor/editor.main'], () => {
           monacoRef.current = monaco.editor.create(editorRef.current, {
             value: code,
@@ -402,10 +402,10 @@
                 </button>
               </form>
               <p className="mt-2 text-sm text-gray-400">
-                Get API keys from <a href="[https://console.x.ai](https://console.x.ai)" className="text-blue-400">xAI</a>,{' '}
-                <a href="[https://platform.openai.com](https://platform.openai.com)" className="text-blue-400">OpenAI</a>,{' '}
-                <a href="[https://console.anthropic.com](https://console.anthropic.com)" className="text-blue-400">Anthropic</a>, or{' '}
-                <a href="[https://openrouter.ai](https://openrouter.ai)" className="text-blue-400">OpenRouter</a>.
+                Get API keys from <a href="https://console.x.ai" className="text-blue-400">xAI</a>,{' '}
+                <a href="https://platform.openai.com" className="text-blue-400">OpenAI</a>,{' '}
+                <a href="https://console.anthropic.com" className="text-blue-400">Anthropic</a>, or{' '}
+                <a href="https://openrouter.ai" className="text-blue-400">OpenRouter</a>.
               </p>
             </div>
           </div>
