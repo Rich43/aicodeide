@@ -18,7 +18,7 @@ jobs:
     - name: Install server dependencies
       run: |
         cd server
-        npm ci
+        npm install
     - name: Install Python dependencies
       run: python3 -m pip install pycodestyle
     - name: Run tests
