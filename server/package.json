@@ -5,7 +5,7 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "test": "node ../tests/test_validatePythonCode.js"
+    "test": "node ../tests/test_validatePythonCode.js && node ../tests/test_failover.js && node ../tests/test_server_integration.js"
   },
   "dependencies": {
     "better-sqlite3": "^8.0.1",
