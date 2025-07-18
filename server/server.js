@@ -336,6 +336,14 @@ wss.on('connection', (ws) => {
       const projectFilesMap = filesToExport.reduce((acc, file) => ({ ...acc, [file.path]: { content: file.content } }), {});
       logEvent(ws, `Exported project ${currentProjectId} as zip`);
       ws.send(JSON.stringify({ type: 'export', files: projectFilesMap }));
+    } else if (type === 'clearLogs') {
+      db.prepare('DELETE FROM logs').run();
+      wss.clients.forEach(client => {
+        if (client.readyState === WebSocket.OPEN) {
+          client.send(JSON.stringify({ type: 'logsCleared' }));
+        }
+      });
+      logEvent(ws, 'Logs cleared');
     }
   });
 

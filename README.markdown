@@ -123,7 +123,7 @@ The server runs on `http://localhost:3000` and WebSocket on `ws://localhost:3000
 - **Log Storage**: SQLite logs grow indefinitely; implement a cleanup mechanism for production.
 
 ## Enhancements
-- Add a "Clear Logs" button to reset the SQLite database.
+- ~~Add a "Clear Logs" button to reset the SQLite database.~~ (completed)
 - Validate code blocks before applying (e.g., syntax check).
 - Add a preview modal for code suggestions before manual application.
 - Warn users when nearing rate limits (e.g., <10 requests remaining).

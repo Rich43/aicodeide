@@ -143,6 +143,8 @@
             setChatMessages(prev => [...prev, { role: 'system', content: status }]);
           } else if (type === 'log') {
             setSystemLogs(prev => [...prev, message]);
+          } else if (type === 'logsCleared') {
+            setSystemLogs([]);
           } else if (type === 'createFile' || type === 'createFolder') {
             // Re-fetch project files to ensure accurate state from DB
             wsRef.current.send(JSON.stringify({ type: 'loadProject', projectId: currentProjectId }));
@@ -294,6 +296,12 @@
       const handleApplyCode = (codeBlockContent, filePath) => {
         if (selectedFile && codeBlockContent && currentProjectId) {
           wsRef.current.send(JSON.stringify({ type: 'applyCode', projectId: currentProjectId, path: selectedFile, content: codeBlockContent }));
+        }
+      };
+
+      const handleClearLogs = () => {
+        if (confirm('Clear all system logs?')) {
+          wsRef.current.send(JSON.stringify({ type: 'clearLogs' }));
         }
       };
 
@@ -570,6 +578,7 @@
                 ) : (
                   <>
                     <h2 className="text-lg font-bold mb-2">System Log</h2>
+                    <button onClick={handleClearLogs} className="mb-2 bg-red-600 hover:bg-red-700 px-2 py-1 rounded text-sm">Clear Logs</button>
                     <div className="flex-1 overflow-auto mb-4 p-2 bg-gray-800 rounded">
                       {systemLogs.map((log, index) => (
                         <div key={index} className="mb-2 text-gray-300">
