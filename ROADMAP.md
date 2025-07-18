@@ -28,7 +28,7 @@ This document tracks the current capabilities of the Coding AI IDE and the plann
 - **Frontend** using React, Tailwind CSS, Monaco Editor, `jsdiff` and `jszip`.
 
 ## Roadmap
-- Add a "Clear Logs" button to reset the SQLite database.
+- ~~Add a "Clear Logs" button to reset the SQLite database.~~ (completed)
 - Validate code blocks before applying (e.g., syntax check).
 - Add a preview modal for code suggestions before manual application.
 - Warn users when nearing rate limits (e.g., <10 requests remaining).
