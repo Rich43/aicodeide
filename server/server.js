@@ -5,6 +5,8 @@ const { OpenAI } = require('openai');
 const jsdiff = require('diff');
 const Database = require('better-sqlite3');
 const { spawn } = require('child_process'); // For Python validation
+const fs = require('fs');
+const path = require('path');
 const { validatePythonCode } = require('./validatePythonCode');
 
 const app = express();
@@ -13,6 +15,8 @@ const wss = new WebSocket.Server({ server });
 
 // Initialize SQLite database
 const db = new Database('logs.db');
+const EXTRACT_BASE = path.join(__dirname, 'extracted_projects');
+if (!fs.existsSync(EXTRACT_BASE)) fs.mkdirSync(EXTRACT_BASE);
 db.exec(`
   CREATE TABLE IF NOT EXISTS logs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -139,7 +143,7 @@ wss.on('connection', (ws) => {
   logs.forEach(log => ws.send(JSON.stringify({ type: 'log', message: `[${log.timestamp}] ${log.message}` })));
 
   ws.on('message', async (message) => {
-    const { type, path, content, chatInput, settings, newPath, projectId, projectName } = JSON.parse(message);
+    const { type, path, content, chatInput, settings, newPath, projectId, projectName, output } = JSON.parse(message);
     const currentProjectId = clientCurrentProject.get(ws);
 
     if (type === 'setSettings') {
@@ -336,6 +340,94 @@ wss.on('connection', (ws) => {
       const projectFilesMap = filesToExport.reduce((acc, file) => ({ ...acc, [file.path]: { content: file.content } }), {});
       logEvent(ws, `Exported project ${currentProjectId} as zip`);
       ws.send(JSON.stringify({ type: 'export', files: projectFilesMap }));
+    } else if (type === 'runTests') {
+      if (!currentProjectId) {
+          ws.send(JSON.stringify({ type: 'error', message: 'No project selected. Cannot run tests.' }));
+          logEvent(ws, 'Run tests failed: No project selected.');
+          return;
+      }
+      const filesToExport = db.prepare('SELECT path, content FROM files WHERE project_id = ?').all(currentProjectId);
+      const projectDir = path.join(EXTRACT_BASE, `project_${currentProjectId}`);
+      fs.rmSync(projectDir, { recursive: true, force: true });
+      filesToExport.forEach(file => {
+          const filePath = path.join(projectDir, file.path);
+          fs.mkdirSync(path.dirname(filePath), { recursive: true });
+          fs.writeFileSync(filePath, file.content);
+      });
+      logEvent(ws, `Extracted project ${currentProjectId} to ${projectDir}`);
+      const testProc = spawn('npm', ['test'], { cwd: path.join(__dirname), shell: true });
+      let output = '';
+      testProc.stdout.on('data', data => {
+          const msg = data.toString();
+          output += msg;
+          logEvent(ws, msg.trim());
+      });
+      testProc.stderr.on('data', data => {
+          const msg = data.toString();
+          output += msg;
+          logEvent(ws, msg.trim());
+      });
+      testProc.on('close', async (code) => {
+          const success = code === 0;
+          ws.send(JSON.stringify({ type: 'testsCompleted', success, output }));
+          if (!success) {
+              const settings = clientSettings.get(ws) || {};
+              if (settings.autoFixTests) {
+                  const projectFiles = db.prepare('SELECT path, content FROM files WHERE project_id = ?').all(currentProjectId);
+                  const context = projectFiles.map(f => `File: ${f.path}\n\`\`\`\n${f.content}\n\`\`\``).join('\n\n');
+                  const messages = [
+                      { role: 'system', content: `You are a coding assistant. Project context:\n${context}` },
+                      { role: 'user', content: `The unit tests failed with the following output:\n${output}\nPlease fix the issues.` }
+                  ];
+                  const response = await callAI(messages, settings, ws);
+                  ws.send(JSON.stringify({ type: 'chat', content: response.content, provider: response.provider, codeBlock: response.codeBlock, rateLimit: response.rateLimit }));
+                  if (settings.autoApplyCode && response.codeBlock && path) {
+                      const existingFile = db.prepare('SELECT content, version, language FROM files WHERE project_id = ? AND path = ?').get(currentProjectId, path);
+                      const oldContent = existingFile?.content || '';
+                      const oldVersion = existingFile?.version || 0;
+                      const lang = existingFile?.language || 'plaintext';
+                      db.prepare('INSERT OR REPLACE INTO files (project_id, path, content, version, language) VALUES (?, ?, ?, ?, ?)').run(currentProjectId, path, response.codeBlock.content, oldVersion + 1, lang);
+                      const diff = jsdiff.createPatch(path, oldContent, response.codeBlock.content);
+                      wss.clients.forEach(client => {
+                          if (client.readyState === WebSocket.OPEN) {
+                              client.send(JSON.stringify({ type: 'diff', path, diff, language: lang }));
+                          }
+                      });
+                      logEvent(ws, `Auto-applied AI fix to ${path}`);
+                  }
+              }
+          }
+      });
+    } else if (type === 'sendTestOutputToAI') {
+      if (!currentProjectId) {
+          ws.send(JSON.stringify({ type: 'error', message: 'No project selected. Cannot send test output.' }));
+          logEvent(ws, 'Send test output failed: No project selected.');
+          return;
+      }
+      const settings = clientSettings.get(ws);
+      if (!settings) return;
+      const projectFiles = db.prepare('SELECT path, content FROM files WHERE project_id = ?').all(currentProjectId);
+      const context = projectFiles.map(f => `File: ${f.path}\n\`\`\`\n${f.content}\n\`\`\``).join('\n\n');
+      const messages = [
+          { role: 'system', content: `You are a coding assistant. Project context:\n${context}` },
+          { role: 'user', content: `The unit tests failed with the following output:\n${output}\nPlease fix the issues.` }
+      ];
+      const response = await callAI(messages, settings, ws);
+      ws.send(JSON.stringify({ type: 'chat', content: response.content, provider: response.provider, codeBlock: response.codeBlock, rateLimit: response.rateLimit }));
+      if (settings.autoApplyCode && response.codeBlock && path) {
+          const existingFile = db.prepare('SELECT content, version, language FROM files WHERE project_id = ? AND path = ?').get(currentProjectId, path);
+          const oldContent = existingFile?.content || '';
+          const oldVersion = existingFile?.version || 0;
+          const lang = existingFile?.language || 'plaintext';
+          db.prepare('INSERT OR REPLACE INTO files (project_id, path, content, version, language) VALUES (?, ?, ?, ?, ?)').run(currentProjectId, path, response.codeBlock.content, oldVersion + 1, lang);
+          const diff = jsdiff.createPatch(path, oldContent, response.codeBlock.content);
+          wss.clients.forEach(client => {
+              if (client.readyState === WebSocket.OPEN) {
+                  client.send(JSON.stringify({ type: 'diff', path, diff, language: lang }));
+              }
+          });
+          logEvent(ws, `Auto-applied AI fix to ${path}`);
+      }
     } else if (type === 'clearLogs') {
       db.prepare('DELETE FROM logs').run();
       wss.clients.forEach(client => {

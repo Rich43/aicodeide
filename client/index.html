@@ -89,7 +89,8 @@
         },
         failoverOrder: JSON.parse(localStorage.getItem('failoverOrder')) || ['xAI', 'OpenAI', 'Anthropic', 'OpenRouter'],
         autoApplyCode: JSON.parse(localStorage.getItem('autoApplyCode')) || false,
-        autoArgueWithAI: JSON.parse(localStorage.getItem('autoArgueWithAI')) || false, // New setting
+        autoArgueWithAI: JSON.parse(localStorage.getItem('autoArgueWithAI')) || false,
+        autoFixTests: JSON.parse(localStorage.getItem('autoFixTests')) || false,
       });
       const [showSettings, setShowSettings] = useState(!Object.values(settings.apiKeys).some(key => key));
       const [rateLimit, setRateLimit] = useState({ remaining: null, limit: null });
@@ -97,6 +98,7 @@
       const monacoRef = useRef(null);
       const wsRef = useRef(null);
       const currentFileLanguage = useRef('javascript'); // To store current file's language for Monaco
+      const [lastTestOutput, setLastTestOutput] = useState('');
 
       useEffect(() => {
         wsRef.current = new WebSocket('ws://localhost:3000');
@@ -109,7 +111,7 @@
           wsRef.current.send(JSON.stringify({ type: 'listProjects' })); // Request project list on connect
         };
         wsRef.current.onmessage = (event) => {
-          const { type, files, path, diff, content, provider, newPath, success, status, message, codeBlock, rateLimit, projects, projectId, projectName, currentProjectId: serverCurrentProjectId, language } = JSON.parse(event.data);
+          const { type, files, path, diff, content, provider, newPath, success, status, message, codeBlock, rateLimit, projects, projectId, projectName, currentProjectId: serverCurrentProjectId, language, output } = JSON.parse(event.data);
           
           if (type === 'init') {
             setFiles(files);
@@ -143,6 +145,15 @@
             setChatMessages(prev => [...prev, { role: 'system', content: status }]);
           } else if (type === 'log') {
             setSystemLogs(prev => [...prev, message]);
+          } else if (type === 'testsCompleted') {
+            setLastTestOutput(output);
+            const logMsg = `Tests ${success ? 'passed' : 'failed'}\n`;
+            setSystemLogs(prev => [...prev, logMsg]);
+            if (success) {
+              alert('All tests passed');
+            } else if (settings.autoFixTests) {
+              // auto fix triggered on server; output already sent to AI
+            }
           } else if (type === 'logsCleared') {
             setSystemLogs([]);
           } else if (type === 'createFile' || type === 'createFolder') {
@@ -305,6 +316,16 @@
         }
       };
 
+      const handleRunTests = () => {
+        if (!currentProjectId) { alert('No project selected.'); return; }
+        wsRef.current.send(JSON.stringify({ type: 'runTests', projectId: currentProjectId, path: selectedFile }));
+      };
+
+      const handleSendTestOutput = () => {
+        if (!lastTestOutput) return;
+        wsRef.current.send(JSON.stringify({ type: 'sendTestOutputToAI', projectId: currentProjectId, path: selectedFile, output: lastTestOutput }));
+      };
+
       const handleSettingsSubmit = (e) => {
         e.preventDefault();
         localStorage.setItem('xaiApiKey', settings.apiKeys.xai);
@@ -314,7 +335,8 @@
         localStorage.setItem('openrouterModel', settings.apiKeys.openrouterModel);
         localStorage.setItem('failoverOrder', JSON.stringify(settings.failoverOrder));
         localStorage.setItem('autoApplyCode', JSON.stringify(settings.autoApplyCode));
-        localStorage.setItem('autoArgueWithAI', JSON.stringify(settings.autoArgueWithAI)); // Save new setting
+        localStorage.setItem('autoArgueWithAI', JSON.stringify(settings.autoArgueWithAI));
+        localStorage.setItem('autoFixTests', JSON.stringify(settings.autoFixTests));
         wsRef.current.send(JSON.stringify({ type: 'setSettings', settings }));
       };
 
@@ -412,6 +434,17 @@
                     Auto-Argue with AI (Python only)
                   </label>
                 </div>
+                <div className="mb-4">
+                  <label className="flex items-center">
+                    <input
+                      type="checkbox"
+                      checked={settings.autoFixTests}
+                      onChange={(e) => setSettings({ ...settings, autoFixTests: e.target.checked })}
+                      className="mr-2"
+                    />
+                    Auto-Send Failing Tests to AI
+                  </label>
+                </div>
                 <button type="submit" className="w-full bg-blue-600 hover:bg-blue-700 p-2 rounded">
                   Save
                 </button>
@@ -445,6 +478,20 @@
                 >
                   Export Project
                 </button>
+                <button
+                  onClick={handleRunTests}
+                  className="ml-2 bg-red-600 hover:bg-red-700 px-2 py-1 rounded text-sm"
+                >
+                  Run Tests
+                </button>
+                {!settings.autoFixTests && lastTestOutput && (
+                  <button
+                    onClick={handleSendTestOutput}
+                    className="ml-2 bg-purple-600 hover:bg-purple-700 px-2 py-1 rounded text-sm"
+                  >
+                    Send Failures to AI
+                  </button>
+                )}
               </div>
             </div>
             {/* Project Selection / Management */}
